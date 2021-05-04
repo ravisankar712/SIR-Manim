@@ -1,11 +1,11 @@
 from manimlib.imports import *
 
 COLOR_MAP = {
-    "S" : "#fac661",
-    "I" : RED,
-    "R" : "#35df90",
-    "D" : BLACK,
-    "V" : "#33a9ff"
+    "S" : "#007f5f",
+    "I" : "#ff0000",
+    "R" : "#242423",
+    "V" : "#0000FF",
+    "A" : "#deff0a"
 }
 
 def update_time(m, dt):
@@ -14,6 +14,7 @@ def update_time(m, dt):
 class City(VGroup):
     CONFIG = {
         "size" : 7,
+        "color" : GREY
     }
 
     def __init__(self, **kwargs):
@@ -28,7 +29,7 @@ class City(VGroup):
     def add_body(self):
         city = Square()
         city.set_height(self.size)
-        city.set_stroke(WHITE, 3.0)
+        city.set_stroke(self.color, 2.0, opacity=0.9)
         self.body = city
         self.add(self.body)
 
@@ -38,19 +39,20 @@ class Person(VGroup):
     CONFIG = { 
         "size" : 0.2,
         "max_speed" : 1,
-        "wall_buff" : 1.0,
+        "wall_buff" : 0.4,
         "random_walk_interval" : 1.0,
         "step_size" : 1.5,
         "gravity_strength" : 1.0,
         "infection_ring_style" : {
-            "stroke_color" : RED,
+            "stroke_color" : COLOR_MAP["I"],
             "stroke_opacity" : 1,
             "stroke_width" : 1.0
         },
         "infection_ring_anim_time" : 0.6,
+        "vaccination_blink_time" : 0.6,
         "infection_radius" : 0.3,
-        "infection_prob" : 0.8,
-        "infection_time" : 5,
+        "infection_prob" : 0.2,
+        "infection_time" : 8,
         "social_distance_factor" : 0.0,
         "obey_social_distancing" : True
     }
@@ -63,8 +65,14 @@ class Person(VGroup):
         self.last_step_update = -1.0
         self.infected_time = -np.inf
         self.recovered_time = -np.inf
+        self.vaccinated_time = -np.inf
         self.gravity_center = None
         self.isUpdating = True
+        self.isTravelling = False
+        self.underQuarantine = False
+        self.isVaccinated = False
+        self.symptoms = True
+        self.destination = None
         self.velocity = np.zeros(3)
         self.city = city
 
@@ -77,6 +85,7 @@ class Person(VGroup):
         self.add_updater(lambda m, dt : m.update_infection_ring(dt))
         self.add_updater(lambda m, dt : m.update_color(dt))
         self.add_updater(lambda m, dt : m.update_status(dt))
+        self.add_updater(lambda m, dt : m.travel(dt))
 
     def add_infection_ring(self):
         ring = Circle(radius=self.size/2.5)
@@ -102,6 +111,8 @@ class Person(VGroup):
             self.infected_time = self.time
         elif status == "R":
             self.recovered_time = self.time
+        elif status == "V":
+            self.vaccinated_time = self.time
 
     def pause_updation(self):
         self.isUpdating = False
@@ -113,9 +124,10 @@ class Person(VGroup):
         self.city = city
 
     def update_position(self, dt):
+        total_force = np.zeros(3)
         if self.isUpdating:
             c = self.get_center()
-            total_force = np.zeros(3)
+            
 
             #updating gravity center
             if (self.time - self.last_step_update) >= self.random_walk_interval:
@@ -155,7 +167,7 @@ class Person(VGroup):
             total_force += wall_force
 
             #social distancing
-            if self.social_distance_factor > 0.0 and self.obey_social_distancing:
+            if self.social_distance_factor > 0.0 and self.obey_social_distancing and not self.underQuarantine:
                 people = self.city.people
                 repulsion_force = np.zeros(3)
                 for other in people:
@@ -166,39 +178,62 @@ class Person(VGroup):
                             repulsion_force += vec/d**3 * self.social_distance_factor
                 total_force += repulsion_force
 
-            #update velocity
-            self.velocity += total_force * dt
+        #update velocity
+        self.velocity += total_force * dt
 
-            #limit speed
-            speed = np.linalg.norm(self.velocity)
-            if speed > self.max_speed:
-                self.velocity = self.max_speed * self.velocity / speed
+        #limit speed
+        speed = np.linalg.norm(self.velocity)
+        if speed > self.max_speed:
+            self.velocity = self.max_speed * self.velocity / speed
 
-            #update postion
-            self.shift(self.velocity * dt)
+        #update postion
+        self.shift(self.velocity * dt)
 
     def update_infection_ring(self, dt):
         if self.status == "I":
+            if self.symptoms:
+                col = COLOR_MAP["I"]
+            else:
+                col = COLOR_MAP["A"]
             if self.time - self.infected_time <= self.infection_ring_anim_time:
                 alpha = (self.time - self.infected_time)/self.infection_ring_anim_time
                 if 0.0 <= alpha <= 1.0:
-                    self.infection_ring.set_width(alpha * self.size * 3 + (1.0-alpha)*self.size)
-                    self.infection_ring.set_style(stroke_opacity=1.0 - alpha, stroke_width=alpha*5)
+                    self.infection_ring.set_width(alpha * self.size * 8 + (1.0-alpha)*self.size)
+                    self.infection_ring.set_style(stroke_color=col, stroke_opacity=there_and_back(alpha), stroke_width=there_and_back(alpha)*5)
             else:
                 self.infection_ring.set_style(stroke_opacity=0.0, stroke_width=0.0)
         
     def update_color(self, dt):
         if self.status == "I":
+            if self.symptoms:
+                col = COLOR_MAP["I"]
+            else:
+                col = COLOR_MAP["A"]
             if self.time - self.infected_time <= self.infection_ring_anim_time:
                 alpha = (self.time - self.infected_time)/self.infection_ring_anim_time
-                if 0.0 <= alpha <= 1.0:
-                    self.body.set_color(interpolate_color(COLOR_MAP["S"], COLOR_MAP["I"], alpha))
+                if 0.0 <= alpha < 1.0:
+                    self.body.set_color(interpolate_color(COLOR_MAP["S"], col, alpha))
+                else:
+                    self.body.set_color(col)
+                
 
         if self.status == "R":
             if self.time - self.recovered_time <= self.infection_ring_anim_time:
                 alpha = (self.time - self.recovered_time)/self.infection_ring_anim_time
-                if 0.0 <= alpha <= 1.0:
+                if 0.0 <= alpha < 1.0:
                     self.body.set_color(interpolate_color(COLOR_MAP["I"], COLOR_MAP["R"], alpha))
+                else:
+                    self.body.set_color(COLOR_MAP["R"])
+                    self.body.set_opacity(0.4)
+
+        if self.status == "V":
+            if self.time - self.vaccinated_time <= self.vaccination_blink_time:
+                alpha = (self.time - self.vaccinated_time)/self.vaccination_blink_time
+                if 0.0 <= alpha <= 1.0:
+                    self.body.set_color(interpolate_color(COLOR_MAP["S"], COLOR_MAP["V"], alpha))
+            else:
+                self.vaccinated_time = self.time
+
 
     def update_status(self, dt):
         people = self.city.people
@@ -208,11 +243,40 @@ class Person(VGroup):
             for other in infected_people:
                 if other != self:
                         d = np.linalg.norm(self.get_center() - other.get_center())
-                        if d < self.infection_radius and random.random() < self.infection_prob:
+                        if d < self.infection_radius and random.random() < self.infection_prob * dt:
                             self.set_status("I")
         elif self.status == "I":
             if (self.time - self.infected_time) > self.infection_time:
                     self.set_status("R")
+
+    def start_journey(self, city):
+        if not self.isTravelling:
+            self.city.remove(self)
+            city.people.add(self)
+            self.isTravelling = True
+            self.pause_updation()
+            self.destination = city
+
+    def travel(self, dt):
+        if self.isTravelling:
+            vec = self.get_center() - self.destination.get_center()
+            d = np.linalg.norm(vec)
+            if d <= self.destination.get_width()/2.0:
+                self.resume_updation()
+                self.isTravelling = False
+                self.city = self.destination
+
+            elif d > 0.0:
+                self.shift(-vec/d * dt * 7)
+                # self.velocity += -vec/d * dt * 10
+
+    def go_quarantine(self, Qzone):
+        if not self.isTravelling:
+            self.city.remove(self)
+            Qzone.people.add(self)
+            self.isTravelling = True
+            self.pause_updation()
+            self.destination = Qzone
 
 
 class SIRSimulation(VGroup):
@@ -225,9 +289,15 @@ class SIRSimulation(VGroup):
             "infection_prob" : 0.5,
             "social_distance_factor" : 0.2,
         },
-        "interstate_travel_prob" : 1.0,
-        "interstate_travel_time" : 0.5,
-        "interstate_travel_freq" : 1.0
+        "travel_rate" : 0.02,
+        "quarantine" : True,
+        "time_for_infections_to_start" : 4,
+        "prob_symptoms" : 0.8,
+        "vaccine_efficacy" : 0.0,
+        "vaccination_frequency" : 2.0,
+        "vaccine_per_day" : 10,
+        "include_vaccination" : True
+    
     }
 
     def __init__(self, **kwargs):
@@ -235,11 +305,15 @@ class SIRSimulation(VGroup):
 
         self.time = 0.0
         self.last_travel_time = -np.inf
+        self.last_vaccinated_time = -np.inf
         self.add_cities()
         self.add_people()
         self.infect_one_person()
 
         self.add_updater(update_time)
+        self.add_updater(lambda m, dt : m.travel(dt))
+        self.add_updater(lambda m, dt : m.put_under_quarantine(dt))
+        self.add_updater(lambda m, dt : m.vaccinate(dt))
 
     def add_cities(self):
         self.cities = VGroup()
@@ -250,6 +324,12 @@ class SIRSimulation(VGroup):
         self.cities.arrange_in_grid(buff=LARGE_BUFF)
         self.add(self.cities)
 
+        if self.quarantine:
+            Qzone = City(size=self.cities.get_height()*0.2, color=RED)
+            Qzone.next_to(self.cities.get_corner(DL) + UP * Qzone.get_height()/2.0, LEFT, buff=0.1*self.cities.get_width())
+            self.Qzone = Qzone
+            self.add(Qzone)
+
     def add_people(self):
         self.people = VGroup()
         for city in self.cities:
@@ -259,6 +339,8 @@ class SIRSimulation(VGroup):
                 else:
                     obey_social_distancing = False
                 p = Person(city=city, **self.person_config, obey_social_distancing=obey_social_distancing)
+                if random.random() > self.prob_symptoms:
+                    p.symptoms = False
 
                 dl = city.get_corner(DL)
                 ur = city.get_corner(UR)
@@ -271,33 +353,278 @@ class SIRSimulation(VGroup):
         self.add(self.people)
     
     def infect_one_person(self):
-        p = random.choice(self.people)
-        p.set_status("I")
+        # for _ in range(10):
+            p = random.choice(self.people)
+            p.set_status("I")
+
+    def travel(self, dt):
+        if self.travel_rate > 0.0:
+            for p in self.people:
+                if random.random() < self.travel_rate * dt and not p.underQuarantine:
+                    new_city = random.choice(self.cities)
+                    if new_city != p.city:
+                        p.start_journey(new_city)
+
+    def put_under_quarantine(self, dt):
+        if self.quarantine:
+            i_people = list(filter(lambda m : m.status == "I", self.people))
+            for p in i_people:
+                if p.time - p.infected_time > self.time_for_infections_to_start and not p.underQuarantine and p.symptoms:
+                    p.isTravelling = False
+                    p.underQuarantine = True
+                    p.go_quarantine(self.Qzone)
+
+    def vaccinate(self, dt):
+        if self.include_vaccination:
+            if self.time - self.last_vaccinated_time > self.vaccination_frequency:
+                self.last_vaccinated_time = self.time
+                s_people = [p for p in self.people if p.status=="S" and not p.isVaccinated]
+                candidates_for_vaccine = []
+                if len(s_people) > 0:
+                    for _ in range(self.vaccine_per_day):
+                        p = random.choice(s_people)
+                        if p not in candidates_for_vaccine:
+                            candidates_for_vaccine.append(p)
+                for p in candidates_for_vaccine:
+                    if random.random() < self.vaccine_efficacy:
+                        p.set_status("V")
+                        p.isVaccinated = True
+                    else:
+                        p.isVaccinated = True
 
 
-class SimulationTemplate(ZoomedScene):
+    def get_counts(self):
+        return np.array(
+            [
+                len(list(filter(lambda m : m.status == status, self.people))) for status in "SIRV"
+            ]
+        )
+
+    def get_normalised_data(self):
+        counts = self.get_counts()
+        return counts/sum(counts)
+
+    def set_social_distancing(self, factor, prob):
+        for p in self.people:
+            if random.random() < prob:
+                p.social_distance_factor = factor
+                p.obey_social_distancing = True
+
+    def set_travel_rate(self, rate):
+        self.travel_rate = rate
+
+                    
+class SIRGraph(VGroup):
+    CONFIG = {
+        "width" : 7,
+        "height" : 5,
+        "update_frequency" : 1/30.0,
+        "include_r_graph" : False,
+    }
+
+    def __init__(self, simulation, **kwargs):
+        super().__init__(**kwargs)
+        self.time = 0.0
+        self.last_update_time = -np.inf
+        self.simulation = simulation
+        self.data = [self.simulation.get_normalised_data()]
+
+        self.add_axes()
+        self.add_x_labels()
+        self.add_y_labels()
+        self.add_graph()
+
+        self.add_updater(update_time)
+        self.add_updater(lambda m, dt : m.update_graph(dt))
+        self.add_updater(lambda m, dt : m.update_labels(dt))
+
+    def add_axes(self):
+        axes = Axes(
+            y_min=0.0,
+            y_max = 1.0,
+            y_axis_config = {
+                "tick_frequency" : 0.1
+            },
+            x_min = 0,
+            x_max = 1,
+            axis_config = {
+                "include_tip" : False
+            }
+        )
+
+        origin = axes.coords_to_point(0, 0)
+        axes.x_axis.set_width(self.width, about_point=origin, stretch=True)
+        axes.y_axis.set_height(self.height, about_point=origin, stretch=True)
+        self.axes = axes
+        self.add(self.axes)
+
+    def add_graph(self):
+        self.graph = self.get_graph()
+        self.add(self.graph)
+
+    def add_x_labels(self):
+        self.x_ticks = VGroup()
+        self.x_labels = VGroup()
+        self.add(self.x_ticks, self.x_labels)
+
+    def add_y_labels(self):
+        xs = np.arange(0.2, 1.1, 0.2)
+        y_labels = VGroup()
+        for x in xs:
+            label = DecimalNumber(x, num_decimal_places=1)
+            label.set_height(self.height * 0.05)
+            label.move_to(self.axes.coords_to_point(0, x) + LEFT * label.get_width())
+            y_labels.add(label)
+        self.y_labels = y_labels
+        self.add(self.y_labels)
+
+    def get_graph(self):
+        axes = self.axes
+        data = self.data
+        i_points = []
+        r_points = []
+
+        for x, counts in zip(np.linspace(0, 1, len(data)), data):
+            i_points.append(axes.coords_to_point(x, counts[1]))
+            r_points.append(axes.coords_to_point(x, counts[2]))
+
+        i_lines = VGroup()
+        for i in range(len(i_points)-1):
+            i_lines.add(Line(i_points[i], i_points[i+1], color=COLOR_MAP["I"], stroke_width=2.0))
+
+        if self.include_r_graph:
+            r_lines = VGroup()
+            for i in range(len(r_points)-1):
+                r_lines.add(Line(r_points[i], r_points[i+1], color=COLOR_MAP["R"], stroke_width=1.0))
+            return VGroup(i_lines, r_lines)
+        else:
+            return i_lines
+
+    def update_graph(self, dt):
+        if self.time - self.last_update_time > self.update_frequency:
+            self.data.append(self.simulation.get_normalised_data())
+            self.graph.become(self.get_graph())
+            self.last_update_time = self.time
+
+    def update_labels(self, dt):
+        tick_height = 0.05 * self.height
+        tick_template = Line(UP, DOWN).set_height(tick_height)
+
+        if self.time < 10:
+            tick_range = range(1, int(self.time) + 1, 1)
+        elif self.time < 50:
+            tick_range = range(5, int(self.time) + 1, 5)
+        elif self.time < 100:
+            tick_range = range(10, int(self.time) + 1, 10)
+        else:
+            tick_range = range(20, int(self.time) + 1, 20)
+
+        def get_tick(x):
+            tick = tick_template.copy()
+            tick.move_to(self.axes.coords_to_point(x/self.time, 0))
+            return tick
+        
+        def get_tick_label(x, tick):
+            label = Integer(x)
+            label.set_height(tick_height)
+            label.next_to(tick, DOWN, buff=0.2*tick_height)
+            return label
+        x_ticks = VGroup()
+        x_labels = VGroup()
+        for x in tick_range:
+            tick = get_tick(x)
+            label = get_tick_label(x, tick)
+            x_ticks.add(tick)
+            x_labels.add(label)
+
+        self.x_ticks.become(x_ticks)
+        self.x_labels.become(x_labels)
+
+    def add_h_line(self, h):
+        line = Line(
+            self.axes.c2p(0, h),
+            self.axes.c2p(1, h),
+            color=YELLOW,
+            stroke_width=2.0
+        )
+        self.add(line)
+
+
+class GeneralSimulation(ZoomedScene):
     CONFIG = {
         "simulation_config" : {
             "n_cities" : 1,
             "city_size" : 7,
-            "n_citizen_per_city" : 50,
-            "infection_prob" : 0.5,
+            "n_citizen_per_city" : 150,
             "social_distance_obedience" : 0.0, #anything between 0 and 1
             "person_config" : {
-                "infection_prob" : 0.5,
-                "social_distance_factor" : 0.2,
-            }
-        }
+                "max_speed" : 0.5,
+                "gravity_strength" : 0.2,
+                "infection_radius" : 0.5,
+                "infection_prob" : 0.2,
+                "infection_time" : 8,
+                "social_distance_factor" : 2.0,
+        
+            },
+            #travel
+            "travel_rate" : 0.02,
+            #quarantine
+            "quarantine" : False,
+            #infection stuff
+            "time_for_infections_to_start" : 4,
+            "prob_symptoms" : 1.0,
+            #vaccine stuff
+            "include_vaccination" : False,
+            "vaccine_efficacy" : 1.0,
+            "vaccination_frequency" : 2.0,
+            "vaccine_per_day" : 10,
+            
+        },
+
+        "graph_config" : {
+            "update_frequency" : 1/30.0,
+            "include_r_graph" : False
+        },
+        "width_to_frameheight_ratio" : 0.5,
+        "height_to_frameheight_ratio" : 0.4,
+        
     }
 
     def setup(self):
         super().setup()
         self.add_simulation()
         self.position_camera()
+        self.add_graph()
+        self.add_n_cases()
+        self.n_cases[1].add_updater(lambda m, dt : m.set_value(self.simulation.get_counts()[1]))
 
     def add_simulation(self):
         self.simulation = SIRSimulation(**self.simulation_config)
         self.add(self.simulation)
+
+    def add_n_cases(self):
+        text = VGroup(TextMobject("Active Cases ="))
+        text.add(Integer(1).next_to(text[0], RIGHT))
+        text.set_width(self.graph.get_width() * 0.6)
+        text.next_to(self.graph, DOWN, buff=self.graph.get_height() * 0.15)
+        text.set_color(COLOR_MAP["I"])
+        self.n_cases = text
+        self.add(self.n_cases)
+
+    def add_graph(self):
+        frame = self.camera_frame
+        h = frame.get_height()
+        graph = SIRGraph(
+            self.simulation, 
+            width=h*self.width_to_frameheight_ratio, 
+            height=h*self.height_to_frameheight_ratio,
+            **self.graph_config
+        )
+        graph.next_to(frame.get_left(), RIGHT, buff=0.2*graph.get_width())
+        graph.shift(UP * h/5.0)
+        self.graph = graph
+        self.add(self.graph)
+    
 
     def position_camera(self):
         cities = self.simulation.cities
@@ -305,16 +632,15 @@ class SimulationTemplate(ZoomedScene):
         height = cities.get_height() + 1
         width = cities.get_width() * 2
 
-        if frame.get_height() < height:
-            frame.set_height(height)
         if frame.get_width() < width:
             frame.set_width(width)
-        
-        frame.next_to(cities.get_right(), LEFT, buff=-0.05*cities.get_width())
-
+        if frame.get_height() < height:
+            frame.set_height(height)
+               
+        frame.next_to(cities.get_right(), LEFT, buff=-0.1*cities.get_width())
 
     def construct(self):
-        self.wait_until(self.count)
+        self.wait_until(self.count, max_time=180)
         self.wait(5)
     
     def count(self):
@@ -324,24 +650,97 @@ class SimulationTemplate(ZoomedScene):
                 c += 1
         return (c == 0)
 
+class Test(GeneralSimulation):
+    CONFIG = {
+            "simulation_config" : {
+            "n_cities" : 1,
+            "city_size" : 7,
+            "n_citizen_per_city" : 100,
+            "social_distance_obedience" : 0.0, #anything between 0 and 1
+            "person_config" : {
+                "max_speed" : 0.5,
+                "gravity_strength" : 0.2,
+                "infection_radius" : 0.5,
+                "infection_prob" : 0.2,
+                "infection_time" : 8,
+                "social_distance_factor" : 2.0,
+        
+            }
+        }}
 
-
-
-class Test(Scene):
     def construct(self):
-        # p = Person()
-        # self.add(p)
-        # self.wait(2)
-        # p.set_status("I")
-        # self.wait(2)
-        # p.set_status("R")
-        C = SIRSimulation(n_citizen_per_city=50)
-        self.add(C)
-        def count():
+        # text = TexMobject("Test")
+        # text.set_width(self.graph.get_width() * 0.25)
+        # text.next_to(self.graph, DOWN, buff=self.graph.get_height() * 0.25)
+        # self.add(text)
+        self.wait(10)
+        # self.simulation.set_social_distancing(0.2, 1.0)
+        # self.wait(5)
+
+class IntroSim(GeneralSimulation):
+    CONFIG = {
+        "graph_config" : {
+            "update_frequency" : 1/60.0
+        }
+    }
+            
+class LargeCity(GeneralSimulation):
+    CONFIG = {
+        "random_seed" : 42,
+        "simulation_config" : {
+            "n_citizen_per_city" : 1000,
+            "person_config" : {
+                "size" : 0.2/3,
+                "max_speed" : 0.25,
+                "gravity_strength" : 0.2,
+                "infection_radius" : 0.25,
+                "infection_time" : 8,
+            }
+        },
+        "graph_config" : {
+            "update_frequency" : 1/60.0
+        }
+    }
+
+class LargeHygienicCity(LargeCity):
+    CONFIG = { 
+        "simulation_config" : {
+            "person_config" : {
+                "infection_prob" : 0.1
+            }
+        }
+    }
+
+class LargeCitySocialDistancing(LargeCity):
+    CONFIG = {
+        "social_distancing_starts_at" : 50,
+        "simulation_config" : {
+            "n_citizen_per_city" : 900,
+        },
+    }
+
+    def construct(self):
+        def till_threshold():
             c = 0
-            for p in C.people:
+            for p in self.simulation.people:
                 if p.status == "I":
                     c += 1
-            return (c == 0)
-        self.wait_until(count)
-        self.wait(5)
+            return (c == self.social_distancing_starts_at)
+        self.wait_until(till_threshold)
+        self.simulation.set_social_distancing(0.2, 1.0)
+        super().construct()
+
+class LargeCityQuarantine(LargeCity):
+    CONFIG = {
+        "simulation_config" : {
+                    "quarantine" : True,
+        }    
+    }
+    
+SCENES_IN_ORDER = [
+    IntroSim,
+    LargeCity,
+    LargeHygienicCity,
+    LargeCitySocialDistancing,
+    LargeCityQuarantine
+]

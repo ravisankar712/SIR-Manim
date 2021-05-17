@@ -129,7 +129,7 @@ class Person(VGroup):
             c = self.get_center()
             
 
-            #updating gravity center
+            #updating gravity center. This is a nicer version of random_walk
             if (self.time - self.last_step_update) >= self.random_walk_interval:
                 self.last_step_update = self.time
                 random_vec = rotate_vector(RIGHT, TAU * random.random())
@@ -240,7 +240,7 @@ class Person(VGroup):
         infected_people = list(filter(lambda m : m.status == "I", people))
 
         if self.status == "S":
-            for other in infected_people: #fix required!! others who are on the way to quarantine should not infect
+            for other in infected_people: #use a Quadtree maybe??
                 if other != self and not other.isTravelling:
                         d = np.linalg.norm(self.get_center() - other.get_center())
                         if d < self.infection_radius and random.random() < self.infection_prob * dt:
@@ -413,7 +413,8 @@ class SIRSimulation(VGroup):
     def set_travel_rate(self, rate):
         self.travel_rate = rate
 
-                    
+
+#most of this is similar to that of 3B1B          
 class SIRGraph(VGroup):
     CONFIG = {
         "width" : 7,
@@ -649,33 +650,6 @@ class GeneralSimulation(ZoomedScene):
             if p.status == "I":
                 c += 1
         return (c == 0)
-
-class Test(GeneralSimulation):
-    CONFIG = {
-            "simulation_config" : {
-            "n_cities" : 1,
-            "city_size" : 7,
-            "n_citizen_per_city" : 100,
-            "social_distance_obedience" : 0.0, #anything between 0 and 1
-            "person_config" : {
-                "max_speed" : 0.5,
-                "gravity_strength" : 0.2,
-                "infection_radius" : 0.5,
-                "infection_prob" : 0.2,
-                "infection_time" : 8,
-                "social_distance_factor" : 2.0,
-        
-            }
-        }}
-
-    def construct(self):
-        # text = TexMobject("Test")
-        # text.set_width(self.graph.get_width() * 0.25)
-        # text.next_to(self.graph, DOWN, buff=self.graph.get_height() * 0.25)
-        # self.add(text)
-        self.wait(10)
-        # self.simulation.set_social_distancing(0.2, 1.0)
-        # self.wait(5)
 
 class IntroSim(GeneralSimulation):
     CONFIG = {
@@ -937,3 +911,93 @@ class ExpvLinear(GraphScene):
             ShowCreation(linear),  Write(linear_text)
         )
         self.wait()
+
+class IntroSIR(Scene):
+    CONFIG = {
+        "random_seed" : 2
+    }
+    def construct(self):
+        self.wait(2)
+        p = Person(city= City(size=6), infection_time=90, max_speed=1.5).scale(1.5)
+        susceptible = TextMobject("Susceptible").set_color(COLOR_MAP["S"])
+        susceptible.add_updater(lambda m : m.next_to(p.get_center(), UP, buff=MED_LARGE_BUFF))
+        S = TextMobject("S").set_color(COLOR_MAP["S"])
+        S.add_updater(lambda m : m.next_to(p.get_center(), UP, buff=MED_LARGE_BUFF))
+        self.play(
+            GrowFromCenter(p)
+        )
+        self.wait(9)
+        self.play(
+            Write(susceptible)
+        )
+        self.wait(1)
+        self.play(
+            ReplacementTransform(susceptible, S)
+        )
+        self.wait(6)
+        I = TextMobject("I").set_color(COLOR_MAP["I"])
+        I.add_updater(lambda m : m.next_to(p.get_center(), UP, buff=MED_LARGE_BUFF))
+        infected = TextMobject("Infected").set_color(COLOR_MAP["I"])
+        infected.add_updater(lambda m : m.next_to(p.get_center(), UP, buff=MED_LARGE_BUFF))
+        p.set_status("I")
+        self.play(
+            ReplacementTransform(S, infected)
+        )
+        self.wait(6)
+        
+        self.play(
+            ReplacementTransform(infected, I)
+        )
+        self.wait(10)
+        R = TextMobject("R").set_color(COLOR_MAP["R"])
+        R.add_updater(lambda m : m.next_to(p.get_center(), UP, buff=MED_LARGE_BUFF))
+        removed = TextMobject("Removed").set_color(COLOR_MAP["R"])
+        removed.add_updater(lambda m : m.next_to(p.get_center(), UP, buff=MED_LARGE_BUFF))
+        p.set_status("R")
+        self.play(
+            ReplacementTransform(I, removed)
+        )
+        self.wait()
+        self.play(
+            ReplacementTransform(removed, R)
+        )
+        self.wait(5)
+        self.play(
+            FadeOut(p),
+            FadeOut(R)
+        ) 
+        self.wait(3.5)
+        prob_inf = TexMobject("\\text{P(}", "\\text{infection}", ")", "=", "20 \\%").to_edge(LEFT)
+        prob_inf[1].set_color(COLOR_MAP["I"])
+        self.play(
+            FadeInFromDown(prob_inf)
+        )
+        self.wait()
+
+class IntroVaccine(Scene):
+    CONFIG = {
+        "random_seed" : 1
+    }
+    def construct(self):
+        p = Person(city= City(size=7)).scale(1.5)
+        S = TextMobject("S").set_color(COLOR_MAP["S"])
+        # S.add_updater(lambda m : m.next_to(p.get_center(), UP, buff=MED_LARGE_BUFF))
+        self.play(
+            GrowFromCenter(p),
+        )
+        self.wait(6)
+        
+        # self.wait(2)
+        # V = TextMobject("V").set_color(COLOR_MAP["V"])
+        # V.add_updater(lambda m : m.next_to(p.get_center(), UP, buff=MED_LARGE_BUFF))
+        p.set_status("V")
+        # self.play(
+        #     ReplacementTransform(S, V)
+        # )
+        self.wait(3)
+        # Vaccinated = TextMobject("Vaccinated").set_color(COLOR_MAP["V"])
+        # Vaccinated.add_updater(lambda m : m.next_to(p.get_center(), UP, buff=MED_LARGE_BUFF))
+        # self.play(
+            # ReplacementTransform(V, Vaccinated)
+        # )
+        # self.wait(2)
